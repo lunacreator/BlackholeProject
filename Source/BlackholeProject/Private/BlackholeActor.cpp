@@ -33,13 +33,14 @@ void ABlackholeActor::Tick(float DeltaTime)
 
         if (MPCInstance && PC)
         {
+            const FVector ActorLocation = GetActorLocation();
             FVector2D ScreenPos;
             int32 SizeX, SizeY;
             PC->GetViewportSize(SizeX, SizeY);
 
             // 1. 3D 월드 좌표 -> 2D 화면 좌표 변환
             // (내 몸통 위치가 화면 어디쯤이니?)
-            bool bIsOnScreen = PC->ProjectWorldLocationToScreen(GetActorLocation(), ScreenPos, false);
+            bool bIsOnScreen = PC->ProjectWorldLocationToScreen(ActorLocation, ScreenPos, false);
 
             if (SizeX > 0 && SizeY > 0)
             {
@@ -52,17 +53,54 @@ void ABlackholeActor::Tick(float DeltaTime)
                 FVector CamLoc;
                 FRotator CamRot;
                 PC->GetPlayerViewPoint(CamLoc, CamRot);
-                FVector DirToTarget = GetActorLocation() - CamLoc;
+                FVector DirToTarget = ActorLocation - CamLoc;
                 float DotProd = FVector::DotProduct(CamRot.Vector(), DirToTarget);
+                const bool bIsBehindCamera = DotProd < 0.0f;
 
-                if (DotProd < 0.0f) // 카메라 뒤에 있다면?
+                if (bIsBehindCamera) // 카메라 뒤에 있다면?
                 {
                     UV_X = -10.0f; // 화면 밖으로 던져버림
                 }
 
+                float ScreenRadiusUV = 0.0f;
+                if (bIsOnScreen && !bIsBehindCamera && MeshComp)
+                {
+                    const float WorldRadius = MeshComp->Bounds.SphereRadius;
+                    const FVector CamRight = CamRot.Quaternion().GetRightVector();
+                    const FVector CamUp = CamRot.Quaternion().GetUpVector();
+                    FVector2D ScreenPosRight;
+                    FVector2D ScreenPosUp;
+
+                    const bool bRightOnScreen = PC->ProjectWorldLocationToScreen(ActorLocation + CamRight * WorldRadius, ScreenPosRight, false);
+                    const bool bUpOnScreen = PC->ProjectWorldLocationToScreen(ActorLocation + CamUp * WorldRadius, ScreenPosUp, false);
+
+                    if (bRightOnScreen && bUpOnScreen)
+                    {
+                        const float RadiusX = FMath::Abs(ScreenPosRight.X - ScreenPos.X) / (float)SizeX;
+                        const float RadiusY = FMath::Abs(ScreenPosUp.Y - ScreenPos.Y) / (float)SizeY;
+                        ScreenRadiusUV = FMath::Max(RadiusX, RadiusY);
+                    }
+                }
+
+                float EffectiveHoleSizeMultiplier = HoleSizeMultiplier;
+                if (bCompensateLensForScale && MeshComp)
+                {
+                    const float Scale = MeshComp->GetComponentScale().GetAbsMax();
+                    EffectiveHoleSizeMultiplier *= (1.0f / FMath::Max(Scale, KINDA_SMALL_NUMBER));
+                }
+
+                const float HoleRadiusUV = ScreenRadiusUV * EffectiveHoleSizeMultiplier;
+                const float LensRadiusUV = HoleRadiusUV * LensRadiusMultiplier + LensRadiusOffsetUV;
+
                 // 4. 데이터 전송 (X, Y 좌표)
                 // Z, W는 안 쓰면 0으로 채움
                 MPCInstance->SetVectorParameterValue(TEXT("BlackholePos"), FLinearColor(UV_X, UV_Y, 0, 0));
+                MPCInstance->SetScalarParameterValue(TEXT("LensingStrength"), LensingStrength);
+                MPCInstance->SetScalarParameterValue(TEXT("HoleSizeMultiplier"), EffectiveHoleSizeMultiplier);
+                MPCInstance->SetScalarParameterValue(TEXT("BlackholeScreenRadius"), ScreenRadiusUV);
+                MPCInstance->SetScalarParameterValue(TEXT("HoleRadius"), HoleRadiusUV);
+                MPCInstance->SetScalarParameterValue(TEXT("LensRadius"), LensRadiusUV);
+                MPCInstance->SetScalarParameterValue(TEXT("BlackholeDepth"), DirToTarget.Size());
             }
         }
     }

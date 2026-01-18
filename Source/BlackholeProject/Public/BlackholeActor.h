@@ -40,6 +40,15 @@ public:
     UPROPERTY(EditAnywhere, Category = "Blackhole Settings")
     float HoleSizeMultiplier = 1.0f;
 
+    UPROPERTY(EditAnywhere, Category = "Blackhole Settings")
+    bool bCompensateLensForScale = true;
+
+    UPROPERTY(EditAnywhere, Category = "Blackhole Settings")
+    float LensRadiusMultiplier = 1.1f;
+
+    UPROPERTY(EditAnywhere, Category = "Blackhole Settings")
+    float LensRadiusOffsetUV = 0.0f;
+
     // 4. ºŒ¿Ã¥ı ø¨µø (MPC)
     UPROPERTY(EditAnywhere, Category = "Blackhole Settings")
     UMaterialParameterCollection* BlackholeMPC;
