@@ -8,6 +8,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "Math/RotationMatrix.h"
 
 ABlackholeActor::ABlackholeActor()
 {
@@ -25,45 +26,72 @@ void ABlackholeActor::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // 셰이더에 위치 전송
     if (BlackholeMPC)
     {
-        UMaterialParameterCollectionInstance* MPCInstance = GetWorld()->GetParameterCollectionInstance(BlackholeMPC);
-        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        UWorld* World = GetWorld();
+        if (!World)
+        {
+            return;
+        }
+
+        UMaterialParameterCollectionInstance* MPCInstance = World->GetParameterCollectionInstance(BlackholeMPC);
+        APlayerController* PC = World->GetFirstPlayerController();
 
         if (MPCInstance && PC)
         {
-            FVector2D ScreenPos;
-            int32 SizeX, SizeY;
+            int32 SizeX = 0;
+            int32 SizeY = 0;
             PC->GetViewportSize(SizeX, SizeY);
 
-            // 1. 3D 월드 좌표 -> 2D 화면 좌표 변환
-            // (내 몸통 위치가 화면 어디쯤이니?)
-            bool bIsOnScreen = PC->ProjectWorldLocationToScreen(GetActorLocation(), ScreenPos, false);
-
-            if (SizeX > 0 && SizeY > 0)
+            if (SizeX <= 0 || SizeY <= 0)
             {
-                // 2. UV 좌표로 변환 (0~1 사이 값)
-                float UV_X = ScreenPos.X / (float)SizeX;
-                float UV_Y = ScreenPos.Y / (float)SizeY;
-
-                // 3. 카메라 뒤쪽 체크 (뒤에 있으면 렌즈 끄기)
-                // (이걸 안 하면 뒤돌았을 때 왜곡이 반대로 튀어나옵니다)
-                FVector CamLoc;
-                FRotator CamRot;
-                PC->GetPlayerViewPoint(CamLoc, CamRot);
-                FVector DirToTarget = GetActorLocation() - CamLoc;
-                float DotProd = FVector::DotProduct(CamRot.Vector(), DirToTarget);
-
-                if (DotProd < 0.0f) // 카메라 뒤에 있다면?
-                {
-                    UV_X = -10.0f; // 화면 밖으로 던져버림
-                }
-
-                // 4. 데이터 전송 (X, Y 좌표)
-                // Z, W는 안 쓰면 0으로 채움
-                MPCInstance->SetVectorParameterValue(TEXT("BlackholePos"), FLinearColor(UV_X, UV_Y, 0, 0));
+                return;
             }
+
+            const FVector Center = MeshComp ? MeshComp->Bounds.Origin : GetActorLocation();
+            FVector CamLoc;
+            FRotator CamRot;
+            PC->GetPlayerViewPoint(CamLoc, CamRot);
+
+            const FVector DirToTarget = Center - CamLoc;
+            const float DotProd = FVector::DotProduct(CamRot.Vector(), DirToTarget);
+            const bool bIsInFront = DotProd >= 0.0f;
+
+            FVector2D ScreenPos(0.0f, 0.0f);
+            const bool bIsOnScreen = PC->ProjectWorldLocationToScreen(Center, ScreenPos, true);
+
+            float UV_X = -10.0f;
+            float UV_Y = -10.0f;
+            if (bIsInFront && bIsOnScreen)
+            {
+                UV_X = ScreenPos.X / static_cast<float>(SizeX);
+                UV_Y = ScreenPos.Y / static_cast<float>(SizeY);
+            }
+
+            float RadiusUV = 0.0f;
+            if (bIsInFront && bIsOnScreen && MeshComp)
+            {
+                const float WorldRadius = MeshComp->Bounds.SphereRadius * FMath::Max(HoleSizeMultiplier, 0.0f);
+                if (WorldRadius > 0.0f)
+                {
+                    const FVector Right = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y);
+                    const FVector EdgeWorld = Center + Right * WorldRadius;
+
+                    FVector2D EdgeScreen(0.0f, 0.0f);
+                    if (PC->ProjectWorldLocationToScreen(EdgeWorld, EdgeScreen, true))
+                    {
+                        const float AspectRatio = static_cast<float>(SizeX) / static_cast<float>(SizeY);
+                        FVector2D CenterUV(UV_X, UV_Y);
+                        FVector2D EdgeUV(EdgeScreen.X / static_cast<float>(SizeX), EdgeScreen.Y / static_cast<float>(SizeY));
+                        FVector2D OffsetUV = EdgeUV - CenterUV;
+                        OffsetUV.X *= AspectRatio;
+                        RadiusUV = OffsetUV.Size();
+                    }
+                }
+            }
+
+            MPCInstance->SetVectorParameterValue(TEXT("BlackholePos"), FLinearColor(UV_X, UV_Y, 0.0f, RadiusUV));
+            MPCInstance->SetScalarParameterValue(TEXT("GravityStrength"), LensingStrength);
         }
     }
 }
