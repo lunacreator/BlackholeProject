@@ -48,7 +48,7 @@ void ABlackholeActor::Tick(float DeltaTime)
                 return;
             }
 
-            const FVector Center = GetActorLocation();
+            const FVector Center = MeshComp ? MeshComp->Bounds.Origin : GetActorLocation();
             FVector CamLoc;
             FRotator CamRot;
             PC->GetPlayerViewPoint(CamLoc, CamRot);
